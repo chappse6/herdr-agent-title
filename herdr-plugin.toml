@@ -1,0 +1,32 @@
+id = "seeun.agent-title"
+name = "Agent Title"
+version = "0.2.0"
+min_herdr_version = "0.9.3"
+description = "Label agent panes with what they are working on: '<agent> · <task title>' on the pane border, any language"
+platforms = ["macos", "linux"]
+
+# Label every live agent pane once the server is ready.
+[[startup]]
+command = ["bash", "agent-title.sh"]
+
+# pane.updated (terminal title changes) is not a plugin hook event, so titles
+# are refreshed on agent lifecycle changes instead.
+[[events]]
+on = "pane.agent_detected"
+command = ["bash", "agent-title.sh"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["bash", "agent-title.sh"]
+
+[[actions]]
+id = "refresh"
+title = "Refresh agent titles"
+contexts = ["workspace"]
+command = ["bash", "agent-title.sh"]
+
+[[actions]]
+id = "install-skill"
+title = "Install the herdr-title skill for Claude Code / Codex"
+contexts = ["workspace"]
+command = ["bash", "scripts/install-skill.sh"]
