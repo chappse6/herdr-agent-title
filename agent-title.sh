@@ -2,17 +2,22 @@
 # Labels agent panes for Herdr:
 #   display_agent = "<agent> · <title>"  (pane border label)
 #   $task token   = "<title>"            (sidebar rows)
-# The title is the agent's terminal title unless one was pinned with `set`.
 #
-#   agent-title.sh               refresh (plugin startup / event hooks / action)
-#   agent-title.sh set <title>   pin a title on the calling pane ($HERDR_PANE_ID)
-#   agent-title.sh clear         unpin, back to the agent's terminal title
-#   agent-title.sh show          print the calling pane's label and title
+# Title priority, per agent session:
+#   1. user pin   `set <title>`   title the user named; never replaced by `auto`
+#   2. agent pin  `auto <title>`  title the agent chose for its current task
+#   3. the agent's terminal title
+#
+#   agent-title.sh                refresh (plugin startup / event hooks / action)
+#   agent-title.sh set <title>    pin the user's title on the calling pane
+#   agent-title.sh auto <title>   pin the agent's own title on the calling pane
+#   agent-title.sh clear          drop the user pin
+#   agent-title.sh show           print label, title and source
 set -u
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HERDR="${HERDR_BIN_PATH:-herdr}"
-SOURCE="agent-title"
+REPORTER="agent-title"
 SEP=$'\x1f'
 # Herdr caps display_agent and token values at 80 characters.
 MAX_CHARS=80
@@ -48,6 +53,23 @@ clip() {
   ' -- "$1" "$2"
 }
 
+# auto_title AGENT RAW: terminal title without decorations naming the agent
+# ("Fix bug - grok", "claude: Fix bug") or dashes left by a stripped spinner.
+auto_title() {
+  local stripped
+  stripped=$(perl -CSA -e '
+    my ($agent, $t) = @ARGV;
+    my $a = quotemeta $agent;
+    my $sep = qr/\s*[-\x{2013}\x{2014}|:\x{00B7}]\s*/;
+    $t =~ s/^\s*$a(?:\s+code)?$sep//i;
+    $t =~ s/$sep$a(?:\s+code)?\s*$//i;
+    $t =~ s/\s*\(\s*$a\s*\)\s*$//i;
+    $t =~ s/^\s*[-\x{2013}\x{2014}]+\s*//;
+    print $t;
+  ' -- "$1" "$2")
+  clip "$MAX_CHARS" "$stripped"
+}
+
 # make_label AGENT TITLE: border label, or the bare agent name when the title
 # only repeats it (e.g. Claude's default "Claude Code").
 make_label() {
@@ -57,6 +79,34 @@ make_label() {
     "" | "$agent" | "$agent code" | "$agent cli") printf '%s' "$agent" ;;
     *) clip "$MAX_CHARS" "$agent · $title" ;;
   esac
+}
+
+# read_pane PANE: loads the pane's state into P_* variables.
+read_pane() {
+  local info
+  info=$("$HERDR" pane get "$1" 2>/dev/null) || return 1
+  IFS="$SEP" read -r P_STATUS P_AGENT P_TERMINAL P_SESSION \
+    P_USER P_USER_SID P_PIN P_PIN_SID P_LABEL P_TASK < <(
+    jq -r --arg sep "$SEP" '.result.pane | [
+      .agent_status, .agent, .terminal_title_stripped, .agent_session.value,
+      .tokens.title_user, .tokens.title_user_session,
+      .tokens.title_agent, .tokens.title_agent_session,
+      .display_agent, .tokens.task
+    ] | map(. // "") | join($sep)' <<<"$info"
+  )
+}
+
+# resolve: TITLE / SOURCE / LABEL from the P_* state. Pins belong to the agent
+# session that set them; a new session in the pane ignores them.
+resolve() {
+  if [ -n "$P_USER" ] && [ "$P_USER_SID" = "$P_SESSION" ]; then
+    TITLE="$P_USER" SOURCE=user
+  elif [ -n "$P_PIN" ] && [ "$P_PIN_SID" = "$P_SESSION" ]; then
+    TITLE="$P_PIN" SOURCE=agent
+  else
+    TITLE=$(auto_title "$P_AGENT" "$P_TERMINAL") SOURCE=terminal
+  fi
+  LABEL=$(make_label "$P_AGENT" "$TITLE")
 }
 
 # Pane from the triggering event; every live agent pane otherwise.
@@ -73,44 +123,26 @@ target_panes() {
   fi
 }
 
-STATUS=""
-
 refresh() {
-  local pane="$1" seq info agent auto pinned pinned_for session cur_label cur_task
-  local title label
-  STATUS=""
+  local pane="$1" seq
+  P_STATUS=""
   # Taken before the read so a slower, older run can't overwrite a newer one.
   seq=$(now_ms)
-  info=$("$HERDR" pane get "$pane" 2>/dev/null) || return 0
-
-  IFS="$SEP" read -r STATUS agent auto pinned pinned_for session cur_label cur_task < <(
-    jq -r --arg sep "$SEP" '.result.pane | [
-      .agent_status, .agent, .terminal_title_stripped,
-      .tokens.title_override, .tokens.title_session, .agent_session.value,
-      .display_agent, .tokens.task
-    ] | map(. // "") | join($sep)' <<<"$info"
-  )
-  [ -n "$agent" ] || return 0
-
-  # A pinned title belongs to the agent session that set it.
-  if [ -n "$pinned" ] && [ "$pinned_for" = "$session" ]; then
-    title="$pinned"
-  else
-    title=$(clip "$MAX_CHARS" "$auto")
-  fi
-  label=$(make_label "$agent" "$title")
+  read_pane "$pane" || return 0
+  [ -n "$P_AGENT" ] || return 0
+  resolve
 
   # Unchanged: no report, so hook-triggered runs can't loop.
-  [ "$cur_label" = "$label" ] && [ "$cur_task" = "$title" ] && return 0
+  [ "$P_LABEL" = "$LABEL" ] && [ "$P_TASK" = "$TITLE" ] && return 0
 
-  if [ -n "$title" ]; then
-    set -- --token "task=$title"
+  if [ -n "$TITLE" ]; then
+    set -- --token "task=$TITLE"
   else
     set -- --clear-token task
   fi
   "$HERDR" pane report-metadata "$pane" \
-    --source "$SOURCE" --agent "$agent" --seq "$seq" \
-    --display-agent "$label" "$@" >/dev/null
+    --source "$REPORTER" --agent "$P_AGENT" --seq "$seq" \
+    --display-agent "$LABEL" "$@" >/dev/null
 }
 
 calling_pane() {
@@ -123,34 +155,44 @@ calling_pane() {
 
 # Keys stay English so scripts and agents can parse the output.
 show() {
-  "$HERDR" pane get "$1" | jq -r '.result.pane |
-    "label: \(.display_agent // .agent // "-")\ntitle: \(.tokens.task // "-")" +
-    (if .tokens.title_override and
-        (.tokens.title_session // "") == (.agent_session.value // "")
-     then "\npinned: \(.tokens.title_override)" else "" end)'
+  read_pane "$1" || return 1
+  resolve
+  printf 'label: %s\ntitle: %s\nsource: %s\n' "$LABEL" "${TITLE:--}" "$SOURCE"
+}
+
+# pin user|agent TITLE...: stores the pin with the current agent session.
+pin() {
+  local tier="$1" pane title
+  shift
+  [ $# -gt 0 ] || { echo "$MSG_USAGE_PIN" >&2; exit 2; }
+  title=$(clip "$MAX_CHARS" "$*")
+  [ -n "$title" ] || { echo "agent-title: $MSG_EMPTY_TITLE" >&2; exit 2; }
+  pane=$(calling_pane) || exit 1
+  read_pane "$pane" || exit 1
+  "$HERDR" pane report-metadata "$pane" --source "$REPORTER" --seq "$(now_ms)" \
+    --token "title_$tier=$title" --token "title_${tier}_session=$P_SESSION" >/dev/null || exit 1
+  refresh "$pane"
+  show "$pane"
 }
 
 main() {
-  local pane title session
+  local pane
   case "${1:-}" in
     set)
       load_messages "$ROOT"
       shift
-      [ $# -gt 0 ] || { echo "$MSG_USAGE_SET" >&2; exit 2; }
-      title=$(clip "$MAX_CHARS" "$*")
-      [ -n "$title" ] || { echo "agent-title: $MSG_EMPTY_TITLE" >&2; exit 2; }
-      pane=$(calling_pane) || exit 1
-      session=$("$HERDR" pane get "$pane" | jq -r '.result.pane.agent_session.value // empty')
-      "$HERDR" pane report-metadata "$pane" --source "$SOURCE" --seq "$(now_ms)" \
-        --token "title_override=$title" --token "title_session=$session" >/dev/null || exit 1
-      refresh "$pane"
-      show "$pane"
+      pin user "$@"
+      ;;
+    auto)
+      load_messages "$ROOT"
+      shift
+      pin agent "$@"
       ;;
     clear)
       load_messages "$ROOT"
       pane=$(calling_pane) || exit 1
-      "$HERDR" pane report-metadata "$pane" --source "$SOURCE" --seq "$(now_ms)" \
-        --clear-token title_override --clear-token title_session >/dev/null || exit 1
+      "$HERDR" pane report-metadata "$pane" --source "$REPORTER" --seq "$(now_ms)" \
+        --clear-token title_user --clear-token title_user_session >/dev/null || exit 1
       refresh "$pane"
       show "$pane"
       ;;
@@ -167,7 +209,7 @@ main() {
           [ -n "$pane" ] || continue
           refresh "$pane" || failed=1
           # Claude retitles the session a few seconds after a new prompt starts work.
-          if [ "$STATUS" = "working" ] && [ -n "${HERDR_PLUGIN_EVENT_JSON:-}" ]; then
+          if [ "$P_STATUS" = "working" ] && [ -n "${HERDR_PLUGIN_EVENT_JSON:-}" ]; then
             sleep 3 && { refresh "$pane" || failed=1; }
             sleep 7 && { refresh "$pane" || failed=1; }
           fi
@@ -183,7 +225,7 @@ main() {
   esac
 }
 
-# Sourcing (tests) only defines the functions.
+# Sourcing (tests, hooks) only defines the functions.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   main "$@"
 fi

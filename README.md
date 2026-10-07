@@ -31,32 +31,41 @@ rows = [
 ]
 ```
 
-## Pin a title
+## Titles
 
-Inside a herdr pane:
+Priority, per agent session: **user pin > agent pin > the agent's terminal title**.
+
+| Pin | Chosen by | Command | Replaced by |
+|---|---|---|---|
+| user | you name the title | `set "<title>"` | only you (`set` again or `clear`) |
+| agent | the agent, for its current task | `auto "<title>"` | the agent's next `auto`; hidden under a user pin |
 
 ```bash
 root=$(herdr plugin list --json | jq -r '.result.plugins[] | select(.plugin_id == "seeun.agent-title") | .plugin_root')
-bash "$root/agent-title.sh" set "Fix login bug"   # pin on this pane
-bash "$root/agent-title.sh" clear                 # back to the auto title
-bash "$root/agent-title.sh" show                  # print label / title
+bash "$root/agent-title.sh" set "Fix login bug"     # user pin
+bash "$root/agent-title.sh" auto "Clean up deploy"  # agent pin
+bash "$root/agent-title.sh" clear                   # drop the user pin
+bash "$root/agent-title.sh" show                    # label / title / source
 ```
 
-A pin applies only to the agent session that set it. A new session in the same pane goes back to the auto title, and so does a herdr server restart.
+Pins apply only to the agent session that set them. A new session in the same pane, or a herdr server restart, falls back to the terminal title.
 
-### Agent skill (Claude Code / Codex)
-
-The bundled `herdr-title` skill lets an agent pin titles when you ask in any language ("set the title to…", "타이틀 바꿔줘", "タイトルを変えて", "把标题改成…").
+### Agent integration (Claude Code / Codex)
 
 ```bash
-herdr plugin action invoke seeun.agent-title.install-skill
+herdr plugin action invoke seeun.agent-title.install-agents
 ```
 
-This links the skill into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex). Start a new agent session to pick it up.
+This connects both agents:
+
+- **Skill** `herdr-title`, linked into `~/.claude/skills` and `~/.agents/skills`. When you ask for a title in any language ("set the title to…", "타이틀 바꿔줘", "タイトルを変えて", "把标题改成…"), the agent pins it with `set`.
+- **Prompt hook** in `~/.claude/settings.json` and `~/.codex/hooks.json`. On each prompt inside herdr it adds a short note with the current title, so the agent pins its own title with `auto` when a task starts or changes, and leaves your pin alone. Outside herdr it prints nothing.
+
+Start a new agent session to pick them up. Undo with `herdr plugin action invoke seeun.agent-title.uninstall-agents`. Every file the installer edits is backed up as `<file>.bak-agent-title`.
 
 ## Languages
 
-CLI messages follow `AGENT_TITLE_LANG`, then `LC_ALL` / `LC_MESSAGES` / `LANG`: English, 한국어, 日本語, 简体中文, 繁體中文, Español, Français, Deutsch. Output keys (`label:`, `title:`, `pinned:`) stay English so scripts can parse them.
+CLI messages follow `AGENT_TITLE_LANG`, then `LC_ALL` / `LC_MESSAGES` / `LANG`: English, 한국어, 日本語, 简体中文, 繁體中文, Español, Français, Deutsch. Output keys (`label:`, `title:`, `source:`) stay English so scripts can parse them.
 
 To add a language, copy `i18n/en.sh` to `i18n/<code>.sh` (for example `pt.sh`), translate the values, and run `bash tests/run.sh`.
 
@@ -78,7 +87,7 @@ The plugin reports two values per agent pane through `herdr pane report-metadata
 | `display_agent` | pane border label | `<agent> · <title>` |
 | `$task` token | sidebar rows | `<title>` |
 
-Pinned titles are stored as the `title_override` and `title_session` pane tokens.
+Pins are stored as the `title_user` / `title_agent` pane tokens, each with the agent session that set it (`title_user_session`, `title_agent_session`).
 
 ## Development
 

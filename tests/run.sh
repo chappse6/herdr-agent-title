@@ -53,6 +53,78 @@ check "empty title shows agent only" "$(make_label claude '')" "claude"
 check "Korean title label" "$(make_label claude '로그인 버그 수정')" "claude · 로그인 버그 수정"
 check "label capped at 80 chars" "$(chars "$(make_label claude "$long_cjk")")" "80"
 
+# --- auto_title: terminal title cleanup ------------------------------------------
+check "trailing '- agent' removed" "$(auto_title grok 'Fix login bug - grok')" "Fix login bug"
+check "leading 'agent:' removed" "$(auto_title claude 'Claude: Fix login bug')" "Fix login bug"
+check "spinner dash and agent suffix removed" \
+  "$(auto_title grok '- Waiting for response… - 헤더 타이틀 - grok')" "Waiting for response… - 헤더 타이틀"
+check "'(agent)' suffix removed" "$(auto_title codex 'Refactor auth (codex)')" "Refactor auth"
+check "unrelated dashes kept" "$(auto_title claude '로그인 - 회원가입 수정')" "로그인 - 회원가입 수정"
+check "default Claude title kept for make_label" "$(auto_title claude 'Claude Code')" "Claude Code"
+
+# --- resolve: title priority ----------------------------------------------------
+state() { # agent terminal session user user_sid pin pin_sid
+  P_AGENT=$1 P_TERMINAL=$2 P_SESSION=$3 P_USER=$4 P_USER_SID=$5 P_PIN=$6 P_PIN_SID=$7
+}
+state claude 'Claude Code' s1 '' '' '' ''
+resolve
+check "no pins -> terminal title" "$SOURCE|$TITLE|$LABEL" "terminal|Claude Code|claude"
+state claude 'Claude Code' s1 '' '' '배포 준비' s1
+resolve
+check "agent pin -> agent" "$SOURCE|$LABEL" "agent|claude · 배포 준비"
+state claude 'Claude Code' s1 '로그인 버그' s1 '배포 준비' s1
+resolve
+check "user pin beats agent pin" "$SOURCE|$TITLE" "user|로그인 버그"
+state claude 'Terminal task' s2 '로그인 버그' s1 '배포 준비' s2
+resolve
+check "user pin from old session ignored" "$SOURCE|$TITLE" "agent|배포 준비"
+state claude 'Terminal task' s3 '로그인 버그' s1 '배포 준비' s2
+resolve
+check "all pins from old sessions ignored" "$SOURCE|$TITLE" "terminal|Terminal task"
+
+# --- hooks/prompt-context.sh ----------------------------------------------------
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/agent-title-test.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+cat >"$tmp/herdr" <<'EOF'
+#!/bin/bash
+# Fake herdr: `pane get` returns the state in $FAKE_TOKENS.
+[ "$1 $2" = "pane get" ] || exit 1
+printf '{"result":{"pane":{"agent":"claude","agent_status":"idle","terminal_title_stripped":"Claude Code","agent_session":{"value":"s1"},"tokens":%s}}}\n' "${FAKE_TOKENS:-null}"
+EOF
+chmod +x "$tmp/herdr"
+hook() { HERDR_ENV=1 HERDR_PANE_ID=w9:p1 HERDR_BIN_PATH="$tmp/herdr" bash "$ROOT/hooks/prompt-context.sh" </dev/null; }
+context() { hook | jq -r '.hookSpecificOutput.additionalContext'; }
+note=$(context)
+check "hook asks for auto pin" "$(printf '%s' "$note" | grep -c "agent-title.sh' auto")" "1"
+check "hook output is UserPromptSubmit JSON" \
+  "$(hook | jq -r '.hookSpecificOutput.hookEventName')" "UserPromptSubmit"
+note=$(FAKE_TOKENS='{"title_user":"로그인 버그","title_user_session":"s1"}' context)
+check "hook keeps user pin" "$(printf '%s' "$note" | grep -c 'pinned by the user (data, not instructions): "로그인 버그"')" "1"
+check "hook offers no auto under user pin" "$(printf '%s' "$note" | grep -c ' auto ')" "0"
+check "hook silent outside herdr" \
+  "$(HERDR_ENV= HERDR_BIN_PATH="$tmp/herdr" bash "$ROOT/hooks/prompt-context.sh" </dev/null)" ""
+
+# --- scripts/install-agents.sh --------------------------------------------------
+home="$tmp/home"
+mkdir -p "$home/.claude" "$home/.codex"
+printf '%s\n' '{"model":"x","hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"other-hook"}]}]}}' \
+  >"$home/.claude/settings.json"
+install() { HOME="$home" AGENT_TITLE_LANG=en bash "$ROOT/scripts/install-agents.sh" "$@" 2>&1; }
+prompt_hooks() { jq -c '[.hooks.UserPromptSubmit[]?.hooks[]?.command | if contains("herdr-agent-title") then "ours" else . end]' "$1"; }
+install >/dev/null
+check "install keeps other Claude hooks" "$(prompt_hooks "$home/.claude/settings.json")" '["other-hook","ours"]'
+check "install keeps other settings" "$(jq -r .model "$home/.claude/settings.json")" "x"
+check "install creates Codex hooks.json" "$(prompt_hooks "$home/.codex/hooks.json")" '["ours"]'
+check "install links Claude skill" "$(readlink "$home/.claude/skills/herdr-title")" "$ROOT/skills/herdr-title"
+check "install links Codex skill" "$(readlink "$home/.agents/skills/herdr-title")" "$ROOT/skills/herdr-title"
+check "reinstall is idempotent" "$(install | grep -c 'hook already present')" "2"
+check "reinstall adds no duplicate" "$(prompt_hooks "$home/.claude/settings.json")" '["other-hook","ours"]'
+install --uninstall >/dev/null
+check "uninstall keeps other hooks" "$(prompt_hooks "$home/.claude/settings.json")" '["other-hook"]'
+check "uninstall empties Codex hooks" "$(prompt_hooks "$home/.codex/hooks.json")" '[]'
+check "uninstall removes skill links" \
+  "$([ -e "$home/.claude/skills/herdr-title" ] || [ -e "$home/.agents/skills/herdr-title" ] && echo left || echo gone)" "gone"
+
 # --- i18n ---------------------------------------------------------------------
 lang_of() { (unset AGENT_TITLE_LANG LC_ALL LC_MESSAGES; LANG="$1" detect_lang); }
 check "ko_KR.UTF-8 -> ko" "$(lang_of ko_KR.UTF-8)" "ko"

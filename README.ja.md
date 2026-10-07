@@ -31,32 +31,41 @@ rows = [
 ]
 ```
 
-## タイトルを固定する
+## タイトル
 
-herdr のペイン内で:
+優先順位 (エージェントセッション単位): **ユーザーの固定 > エージェントの固定 > エージェントのターミナルタイトル**。
+
+| 固定 | 決める人 | コマンド | 置き換わるとき |
+|---|---|---|---|
+| ユーザー | ユーザーがタイトルを指定 | `set "<タイトル>"` | ユーザーのみ (`set` し直すか `clear`) |
+| エージェント | エージェントが現在の作業に合わせて | `auto "<タイトル>"` | エージェントの次の `auto`。ユーザーの固定があると隠れる |
 
 ```bash
 root=$(herdr plugin list --json | jq -r '.result.plugins[] | select(.plugin_id == "seeun.agent-title") | .plugin_root')
-bash "$root/agent-title.sh" set "ログイン不具合の修正"   # このペインに固定
-bash "$root/agent-title.sh" clear                        # 自動タイトルに戻す
-bash "$root/agent-title.sh" show                         # ラベル / タイトルを表示
+bash "$root/agent-title.sh" set "ログイン不具合の修正"   # ユーザーの固定
+bash "$root/agent-title.sh" auto "デプロイ整理"         # エージェントの固定
+bash "$root/agent-title.sh" clear                       # ユーザーの固定を解除
+bash "$root/agent-title.sh" show                        # ラベル / タイトル / 出所
 ```
 
-固定したタイトルは、それを設定したエージェントセッションにのみ適用されます。同じペインで新しいセッションを始めるか herdr サーバーを再起動すると、自動タイトルに戻ります。
+固定は、それを設定したエージェントセッションにのみ適用されます。同じペインで新しいセッションを始めるか herdr サーバーを再起動すると、ターミナルタイトルに戻ります。
 
-### エージェント用スキル (Claude Code / Codex)
-
-同梱の `herdr-title` スキルを使うと、どの言語で頼んでもエージェントがタイトルを固定します (「タイトルを変えて」、"set the title to…"、「타이틀 바꿔줘」、「把标题改成…」)。
+### エージェント連携 (Claude Code / Codex)
 
 ```bash
-herdr plugin action invoke seeun.agent-title.install-skill
+herdr plugin action invoke seeun.agent-title.install-agents
 ```
 
-スキルが `~/.claude/skills` (Claude Code) と `~/.agents/skills` (Codex) にリンクされます。新しいエージェントセッションから有効になります。
+両方のエージェントに次を接続します。
+
+- **スキル** `herdr-title`: `~/.claude/skills` と `~/.agents/skills` にリンクされます。どの言語でタイトルを頼んでも (「タイトルを変えて」、"set the title to…"、「타이틀 바꿔줘」、「把标题改成…」)、エージェントが `set` で固定します。
+- **プロンプトフック**: `~/.claude/settings.json` と `~/.codex/hooks.json` に登録されます。herdr 内でプロンプトを送るたびに現在のタイトルを含む短い案内を追加するため、エージェントは作業が始まったり変わったりしたときに `auto` で自分のタイトルを固定し、ユーザーの固定には触れません。herdr の外では何も出力しません。
+
+新しいエージェントセッションから有効になります。解除は `herdr plugin action invoke seeun.agent-title.uninstall-agents` です。インストーラーが編集するファイルは `<ファイル>.bak-agent-title` としてバックアップされます。
 
 ## 言語
 
-CLI メッセージは `AGENT_TITLE_LANG`、次に `LC_ALL` / `LC_MESSAGES` / `LANG` に従います。対応言語: English、한국어、日本語、简体中文、繁體中文、Español、Français、Deutsch。出力のキー (`label:`、`title:`、`pinned:`) はスクリプトで読めるよう英語のままです。
+CLI メッセージは `AGENT_TITLE_LANG`、次に `LC_ALL` / `LC_MESSAGES` / `LANG` に従います。対応言語: English、한국어、日本語、简体中文、繁體中文、Español、Français、Deutsch。出力のキー (`label:`、`title:`、`source:`) はスクリプトで読めるよう英語のままです。
 
 言語を追加するには、`i18n/en.sh` を `i18n/<コード>.sh` (例: `pt.sh`) にコピーして翻訳し、`bash tests/run.sh` を実行してください。
 
@@ -78,7 +87,7 @@ herdr 0.9.3 にはターミナルタイトルの変更に対するプラグイ�
 | `display_agent` | ペインの枠のラベル | `<agent> · <タイトル>` |
 | `$task` トークン | サイドバーの行 | `<タイトル>` |
 
-固定したタイトルは `title_override` と `title_session` のペイントークンに保存されます。
+固定したタイトルは `title_user` / `title_agent` のペイントークンに保存され、それぞれ設定したエージェントセッション (`title_user_session`、`title_agent_session`) も記録されます。
 
 ## 開発
 

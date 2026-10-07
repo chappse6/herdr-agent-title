@@ -1,6 +1,6 @@
 id = "seeun.agent-title"
 name = "Agent Title"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.3"
 description = "Label agent panes with what they are working on: '<agent> · <task title>' on the pane border, any language"
 platforms = ["macos", "linux"]
@@ -26,7 +26,13 @@ contexts = ["workspace"]
 command = ["bash", "agent-title.sh"]
 
 [[actions]]
-id = "install-skill"
-title = "Install the herdr-title skill for Claude Code / Codex"
+id = "install-agents"
+title = "Connect Claude Code / Codex (skill + prompt hook)"
 contexts = ["workspace"]
-command = ["bash", "scripts/install-skill.sh"]
+command = ["bash", "scripts/install-agents.sh"]
+
+[[actions]]
+id = "uninstall-agents"
+title = "Disconnect Claude Code / Codex"
+contexts = ["workspace"]
+command = ["bash", "scripts/install-agents.sh", "--uninstall"]

@@ -31,32 +31,41 @@ rows = [
 ]
 ```
 
-## 固定标题
+## 标题
 
-在 herdr 窗格中:
+优先级 (按智能体会话): **用户固定 > 智能体固定 > 智能体的终端标题**。
+
+| 固定 | 由谁决定 | 命令 | 何时被替换 |
+|---|---|---|---|
+| 用户 | 用户指定标题 | `set "<标题>"` | 只有用户 (再次 `set` 或 `clear`) |
+| 智能体 | 智能体根据当前任务 | `auto "<标题>"` | 智能体的下一次 `auto`；存在用户固定时被隐藏 |
 
 ```bash
 root=$(herdr plugin list --json | jq -r '.result.plugins[] | select(.plugin_id == "seeun.agent-title") | .plugin_root')
-bash "$root/agent-title.sh" set "修复登录错误"   # 固定到当前窗格
-bash "$root/agent-title.sh" clear                # 恢复自动标题
-bash "$root/agent-title.sh" show                 # 输出标签 / 标题
+bash "$root/agent-title.sh" set "修复登录错误"    # 用户固定
+bash "$root/agent-title.sh" auto "整理部署脚本"   # 智能体固定
+bash "$root/agent-title.sh" clear                 # 取消用户固定
+bash "$root/agent-title.sh" show                  # 标签 / 标题 / 来源
 ```
 
-固定的标题只对设置它的那个智能体会话生效。在同一窗格中开始新会话，或重启 herdr 服务器后，会恢复为自动标题。
+固定只对设置它的那个智能体会话生效。在同一窗格中开始新会话，或重启 herdr 服务器后，会恢复为终端标题。
 
-### 智能体技能 (Claude Code / Codex)
-
-附带的 `herdr-title` 技能让智能体在你用任何语言提出请求时固定标题 (“把标题改成…”、"set the title to…"、“타이틀 바꿔줘”、“タイトルを変えて”)。
+### 智能体集成 (Claude Code / Codex)
 
 ```bash
-herdr plugin action invoke seeun.agent-title.install-skill
+herdr plugin action invoke seeun.agent-title.install-agents
 ```
 
-该命令会把技能链接到 `~/.claude/skills` (Claude Code) 和 `~/.agents/skills` (Codex)。从新的智能体会话开始生效。
+为两个智能体接入:
+
+- **技能** `herdr-title`: 链接到 `~/.claude/skills` 和 `~/.agents/skills`。无论用哪种语言请求标题 (“把标题改成…”、"set the title to…"、“타이틀 바꿔줘”、“タイトルを変えて”)，智能体都会用 `set` 固定。
+- **提示钩子**: 注册到 `~/.claude/settings.json` 和 `~/.codex/hooks.json`。在 herdr 中每次发送提示时，它会附加一段包含当前标题的简短说明，于是智能体在任务开始或变化时用 `auto` 固定自己的标题，而不会改动用户固定的标题。在 herdr 之外不输出任何内容。
+
+从新的智能体会话开始生效。撤销: `herdr plugin action invoke seeun.agent-title.uninstall-agents`。安装脚本修改的每个文件都会备份为 `<文件>.bak-agent-title`。
 
 ## 语言
 
-CLI 消息依次参考 `AGENT_TITLE_LANG`、`LC_ALL` / `LC_MESSAGES` / `LANG`。支持: English、한국어、日本語、简体中文、繁體中文、Español、Français、Deutsch。输出键 (`label:`、`title:`、`pinned:`) 保持英文，便于脚本解析。
+CLI 消息依次参考 `AGENT_TITLE_LANG`、`LC_ALL` / `LC_MESSAGES` / `LANG`。支持: English、한국어、日本語、简体中文、繁體中文、Español、Français、Deutsch。输出键 (`label:`、`title:`、`source:`) 保持英文，便于脚本解析。
 
 添加新语言: 将 `i18n/en.sh` 复制为 `i18n/<代码>.sh` (例如 `pt.sh`)，翻译其中的值，然后运行 `bash tests/run.sh`。
 
@@ -78,7 +87,7 @@ herdr 0.9.3 没有针对终端标题变化的插件钩子，因此在一轮工�
 | `display_agent` | 窗格边框标签 | `<agent> · <标题>` |
 | `$task` 令牌 | 侧边栏行 | `<标题>` |
 
-固定的标题保存在 `title_override` 和 `title_session` 窗格令牌中。
+固定的标题保存在 `title_user` / `title_agent` 窗格令牌中，并分别记录设置它的智能体会话 (`title_user_session`、`title_agent_session`)。
 
 ## 开发
 

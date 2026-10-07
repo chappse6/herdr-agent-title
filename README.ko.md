@@ -31,32 +31,41 @@ rows = [
 ]
 ```
 
-## 타이틀 고정
+## 타이틀
 
-herdr pane 안에서:
+우선순위 (agent 세션 단위): **사용자 고정 > agent 고정 > agent의 터미널 타이틀**.
+
+| 고정 | 정하는 쪽 | 명령 | 바뀌는 경우 |
+|---|---|---|---|
+| 사용자 | 사용자가 타이틀을 지정 | `set "<타이틀>"` | 사용자만 (`set` 다시 또는 `clear`) |
+| agent | agent가 현재 작업에 맞게 | `auto "<타이틀>"` | agent의 다음 `auto`. 사용자 고정이 있으면 가려짐 |
 
 ```bash
 root=$(herdr plugin list --json | jq -r '.result.plugins[] | select(.plugin_id == "seeun.agent-title") | .plugin_root')
-bash "$root/agent-title.sh" set "로그인 버그 수정"   # 이 pane에 고정
-bash "$root/agent-title.sh" clear                    # 자동 타이틀로 복귀
-bash "$root/agent-title.sh" show                     # 라벨 / 타이틀 출력
+bash "$root/agent-title.sh" set "로그인 버그 수정"     # 사용자 고정
+bash "$root/agent-title.sh" auto "배포 스크립트 정리"  # agent 고정
+bash "$root/agent-title.sh" clear                      # 사용자 고정 해제
+bash "$root/agent-title.sh" show                       # 라벨 / 타이틀 / 출처
 ```
 
-고정한 타이틀은 그것을 설정한 agent 세션에만 적용됩니다. 같은 pane에서 새 세션을 시작하거나 herdr 서버를 재시작하면 자동 타이틀로 돌아갑니다.
+고정은 그것을 설정한 agent 세션에만 적용됩니다. 같은 pane에서 새 세션을 시작하거나 herdr 서버를 재시작하면 터미널 타이틀로 돌아갑니다.
 
-### Agent skill (Claude Code / Codex)
-
-함께 들어 있는 `herdr-title` skill을 쓰면 어떤 언어로 요청해도 agent가 타이틀을 고정합니다 ("타이틀 바꿔줘", "set the title to…", "タイトルを変えて", "把标题改成…").
+### Agent 연동 (Claude Code / Codex)
 
 ```bash
-herdr plugin action invoke seeun.agent-title.install-skill
+herdr plugin action invoke seeun.agent-title.install-agents
 ```
 
-skill이 `~/.claude/skills`(Claude Code)와 `~/.agents/skills`(Codex)에 연결됩니다. 새 agent 세션부터 적용됩니다.
+두 agent에 다음을 연결합니다.
+
+- **Skill** `herdr-title`: `~/.claude/skills`와 `~/.agents/skills`에 연결됩니다. 어떤 언어로든 타이틀을 요청하면 ("타이틀 바꿔줘", "set the title to…", "タイトルを変えて", "把标题改成…") agent가 `set`으로 고정합니다.
+- **프롬프트 hook**: `~/.claude/settings.json`과 `~/.codex/hooks.json`에 등록됩니다. herdr 안에서 프롬프트를 보낼 때마다 현재 타이틀이 담긴 짧은 안내를 추가합니다. 그래서 agent는 작업이 시작되거나 바뀌면 `auto`로 자기 타이틀을 고정하고, 사용자 고정은 건드리지 않습니다. herdr 밖에서는 아무것도 출력하지 않습니다.
+
+새 agent 세션부터 적용됩니다. 해제는 `herdr plugin action invoke seeun.agent-title.uninstall-agents`입니다. 설치 스크립트가 수정하는 파일은 `<파일>.bak-agent-title`로 백업됩니다.
 
 ## 언어
 
-CLI 메시지는 `AGENT_TITLE_LANG`, 그다음 `LC_ALL` / `LC_MESSAGES` / `LANG`을 따릅니다. 지원 언어: English, 한국어, 日本語, 简体中文, 繁體中文, Español, Français, Deutsch. 출력 키(`label:`, `title:`, `pinned:`)는 스크립트가 읽을 수 있도록 영어로 유지합니다.
+CLI 메시지는 `AGENT_TITLE_LANG`, 그다음 `LC_ALL` / `LC_MESSAGES` / `LANG`을 따릅니다. 지원 언어: English, 한국어, 日本語, 简体中文, 繁體中文, Español, Français, Deutsch. 출력 키(`label:`, `title:`, `source:`)는 스크립트가 읽을 수 있도록 영어로 유지합니다.
 
 언어를 추가하려면 `i18n/en.sh`를 `i18n/<코드>.sh`(예: `pt.sh`)로 복사해 번역하고 `bash tests/run.sh`를 실행하세요.
 
@@ -78,7 +87,7 @@ herdr 0.9.3에는 터미널 타이틀 변경에 대한 플러그인 hook이 없�
 | `display_agent` | pane 테두리 라벨 | `<agent> · <타이틀>` |
 | `$task` 토큰 | 사이드바 행 | `<타이틀>` |
 
-고정한 타이틀은 `title_override`, `title_session` pane 토큰에 저장됩니다.
+고정한 타이틀은 `title_user` / `title_agent` pane 토큰에 저장되고, 각각 설정한 agent 세션(`title_user_session`, `title_agent_session`)이 함께 기록됩니다.
 
 ## 개발
 
